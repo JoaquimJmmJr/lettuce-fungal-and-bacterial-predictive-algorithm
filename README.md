@@ -60,7 +60,7 @@ As métricas centrais do modelo são o maior bloco contínuo de horas em condiç
 - A análise é baseada nas últimas 24 horas (`df[col_ts].max() - pd.Timedelta(hours=24)`)
 - Cálculo executado a cada 30 minutos (`intervalo_min = 30`)
 
-> O sensor SHT31 realizará leituras a cada varredura salvando a média, os máximos de UR e o tempo contínuo crítico como processamento; ao final o robô envia ao banco via HTTP. A duração é calculada pela diferença real entre timestamps consecutivos, garantindo robustez a leituras irregulares sem necessidade de interpolação.
+> O sensor SHT31 realizará leituras a cada varredura salvando a média, os máximos de UR e o tempo contínuo crítico (UR>90%) como processamento; ao final, o ESP32 publica esses dados via protocolo serial UART à Raspberry Pi que os recebe diretamente e os persiste no banco de dados MySQL. A duração é calculada pela diferença real entre timestamps consecutivos, garantindo robustez a leituras irregulares sem necessidade de interpolação.
 ---
 
 ### 1.4 Estrutura dos dados
@@ -86,11 +86,11 @@ timestamp,temp,umidade,solo
 |-------------------------|-------------------------------------------|
 | Backend / processamento | Python (Pandas + NumPy)                   |
 
-#### Implementações futuras:
+#### Implementações futuras com dados reais:
 
 | Hardware (IoT) | ESP32 + Sensores de temperatura e umidade |
 |---|---|
-| Banco de dados | Supabase (PostgreSQL) |
+| Banco de dados | MySQL     |
 | Visualização   | Streamlit |
 
 ---
@@ -147,12 +147,19 @@ O treinamento ocorre em duas fases para evitar o *catastrophic forgetting* — a
 
 ### 2.4 Dataset e balanceamento
 
-| Classe        | Total          |
-|---------------|----------------|
-| Downey Mildew | 1.082 imagens  |
-| Healthy       | 1.656 imagens  |
-| **Total**     | **2.738 imagens** |
+#### Composição do dataset de treinamento:
+| Fonte (Roboflow Universe) | Classe | Imagens | 
+| --- | --- | --- |
+|2G Care Spice — Lettuce Folder X3 | Downy Mildew | 673 | 
+|2G Care Spice — Lettuce Folder X3 | Healthy      | 569 |
+|YSSP — Lettuce Detections         | Downy Mildew | 179 |
+|LetCare — Lettuce Care            | Downy Mildew | 230 |
+|Lettuce Disease — Lettuce Disease | Healthy | 1.087 |
+|Total Downy Mildew | --- | 1.082 |
+|Total Healthy | --- | 1.656 |
+|**Total geral** | --- |**2.738** | 
 
+#### Particionamento do dataset para treinamento:
 | Partição | Imagens | Divisão (%) |
 |----------|---------|-------------|
 | Treino   | 1.918   | 70%         |
@@ -217,29 +224,29 @@ O modelo exportado no formato `.keras` preserva a arquitetura completa, os pesos
 ## 3. Arquitetura do sistema
 
 ```
-ESP32 → envia dados → Supabase (tabela temporal)
-                         ↓
-                 Script Python (a cada 30 min)
-                         ↓
-                 Calcula risco ambiental
-                         ↓
-              ┌── Risco ALTO? ──┐
-              Não               Sim
-              ↓                  ↓
-           Aguarda        Robô fotografa a planta
-                                 ↓
-                        Modelo CNN classifica
-                        (Healthy / Downey Mildew)
-                                 ↓
-                        Salva resultado / dashboard
-                                 ↓
-                        Aciona tratamento com Luz UV-C
+ESP32 → transmite dados via UART →  MySQL (tabela temporal)
+                                      ↓
+                              Script Python (a cada 30 min)
+                                      ↓
+                              Calcula risco ambiental
+                                      ↓
+                            ┌── Risco ALTO? ───┐
+                            Não               Sim
+                            ↓                  ↓
+                        Aguarda        Robô fotografa a planta
+                                               ↓
+                                      Modelo CNN classifica
+                                      (Healthy / Downey Mildew)
+                                               ↓
+                                      Salva resultado / dashboard
+                                               ↓
+                                      Aciona tratamento com Luz UV-C
 ```
 
 ## 4. Fluxo de funcionamento
 
 1. Sensores coletam dados ambientais a cada 30 minutos
-2. Dados são enviados ao banco (Supabase)
+2. Dados são enviados ao banco (MySQL)
 3. Script Python:
    - Lê as últimas 24h
    - Identifica condições críticas de temperatura e umidade
@@ -279,7 +286,7 @@ timestamp,temp,umidade,solo
 
 ### Executar o script
 ```bash
-python algoritmo-previsao-mildio-pandas.py
+python modelo-deterministico-mildio.py
 ```
 
 ### Saída esperada
@@ -328,6 +335,7 @@ Doenças com potencial de inclusão futura:
 ---
 
 ## 7. Referências
+2G CARE SPICE. **Lettuce Folder X3 Dataset: lettuce downy mildew and healthy leaves**. Roboflow Universe, 2024. Disponível em: https://universe.roboflow.com/2g-care-spice/lettuce-folder-x3. Acesso em: abr. 2026. 
 
 AARROUF, J.; URBAN, L. **Flashes of UV-C light: an innovative method for stimulating plant defences**. PLoS ONE, v. 15, n. 7, e0235918, 2020.
 
@@ -345,22 +353,28 @@ GOODFELLOW, I.; BENGIO, Y.; COURVILLE, A. **Deep Learning**. Cambridge: MIT Pres
 
 INSTITUTO BIOLÓGICO. **Guia de Sanidade Vegetal**. Versão 1.0. São Paulo: Instituto Biológico, [s.d.]. Disponível em: https://www.sica.bio.br/guiabiologico/busca_culturas_resultado_ok.php?Id=13&Vlt=3. Acesso em: 5 maio 2026.
 
-KUSHALAPPA, A. C. BREMCAST: development of a system to forecast the risk levels of downy mildew on lettuce based on sporulation. **International Journal of Pest Management**, v. 47, n. 1, p. 1–5, 2001.
+KUSHALAPPA, A. C. **BREMCAST: development of a system to forecast the risk levels of downy mildew on lettuce based on sporulation**. International Journal of Pest Management, v. 47, n. 1, p. 1–5, 2001.
+
+LETCARE. **Lettuce Care Dataset: downy mildew on lettuce**. Roboflow Universe, 2024. Disponível em: https://universe.roboflow.com/letcare/lettuce-care-aadyx. Acesso em: abr. 2026. 
+
+LETTUCE DISEASE DATASET. **Lettuce Disease: healthy lettuce leaves**. Roboflow Universe, 2024. Disponível em: https://universe.roboflow.com/lettuce-gjt5u/lettuce-disease-uuxm6. Acesso em: abr. 2026.
 
 LOPES, C. A. et al. Principais doenças e pragas da alface. In: ______. **Alface de A a Z**. Brasília: Embrapa Hortaliças, 2023. cap. 12.
 
-ONOFRE, R. B. et al. Nighttime application of UV-C light to control cucurbit powdery mildew. **Plant Health Progress**, v. 21, n. 1, p. 31–36, 2020.
+ONOFRE, R. B. et al. **Nighttime application of UV-C light to control cucurbit powdery mildew**. Plant Health Progress, v. 21, n. 1, p. 31–36, 2020.
 
-PEDREGOSA, F. et al. Scikit-learn: machine learning in Python. **Journal of Machine Learning Research**, v. 12, p. 2825–2830, 2011.
+PEDREGOSA, F. et al. **Scikit-learn: machine learning in Python**. Journal of Machine Learning Research, v. 12, p. 2825–2830, 2011.
 
-SIDIBÉ, A. et al. Preharvest UV-C hormesis induces key genes associated with homeostasis, growth and defense in lettuce. **Frontiers in Plant Science**, v. 13, 2022.
+SIDIBÉ, A. et al. **Preharvest UV-C hormesis induces key genes associated with homeostasis, growth and defense in lettuce**. Frontiers in Plant Science, v. 13, 2022.
 
 SMITH, I. M. et al. **Bremia lactucae**. In: CABI COMPENDIUM. Wallingford: CABI, 2021.Disponível em: https://www.cabidigitallibrary.org/doi/10.1079/cabicompendium.10696. Acesso em: mai. 2025.
 
-SUTHAPARAN, A. et al. Specific alteration of plant-pathogen interactions by UV-B radiation: inactivation of powdery mildew infections by low doses of UV-B. **Journal of Photochemistry and Photobiology B: Biology**, v. 114, p. 10–19, 2012.
+SUTHAPARAN, A. et al. **Specific alteration of plant-pathogen interactions by UV-B radiation: inactivation of powdery mildew infections by low doses of UV-B**. Journal of Photochemistry and Photobiology B: Biology, v. 114, p. 10–19, 2012.
 
 TAN, M.; LE, Q. V. EfficientNet: rethinking model scaling for convolutional neural networks. In: INTERNATIONAL CONFERENCE ON MACHINE LEARNING, 36., 2019. **Proceedings** [...]. [S. l.]: PMLR, 2019. p. 6105–6114.
 
 VEGETABLES BAYER. **Lettuce downy mildew**. [S. l.]: Bayer, [s.d.]. Disponível em: https://www.vegetables.bayer.com/ca/en-ca/resources/agronomic-spotlights/lettuce-downy-mildew.html. Acesso em: 5 maio 2026.
 
 WALLACH, D. et al. Improving the performance of vegetable leaf wetness duration models in greenhouses using decision tree analysis. **Water**, v. 10, n. 7, p. 869, 2018.
+
+YSSP. **Lettuce Detections Dataset: downy mildew class**. Roboflow Universe, 2024. Disponível em: https://universe.roboflow.com/yssp/lettuce-detections. Acesso em: abr. 2026.
